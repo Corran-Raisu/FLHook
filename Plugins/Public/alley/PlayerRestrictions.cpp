@@ -1063,7 +1063,7 @@ void __stdcall HkCb_AddDmgEntry_AFTER(DamageList *dmg, unsigned short p1, float 
 				//HkMsgU(L"DEBUG: damage by repair ship, is it healing?");					
 				//PrintUserCmdText(client, L"Projected damage: %f", projecteddamage);
 
-				if ((projecteddamage <= 1) && (projecteddamage > 0))
+				if ((projecteddamage <= 2) && (projecteddamage > 0))
 				{
 					//Handle the healing.
 					returncode = SKIPPLUGINS_NOFUNCTIONCALL;

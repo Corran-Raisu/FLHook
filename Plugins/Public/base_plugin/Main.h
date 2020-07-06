@@ -582,6 +582,11 @@ extern float set_shield_damage_multiplier;
 /// Holiday mode
 extern bool set_holiday_mode;
 
+// Chance for the repair ship to consume repair commodities. Default: 1 per 20 shots.
+extern float repairship_chance;
+
+// Rate of repair from a repair ship as a percentage of normal repair cycles. Default: 100% of repair_per_repair_cycle per 40 shots.
+extern float repairship_rate;
 wstring HtmlEncode(wstring text);
 
 extern string set_status_path_html;

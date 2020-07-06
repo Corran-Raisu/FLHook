@@ -95,6 +95,12 @@ bool load_settings_required = true;
 /// holiday mode
 bool set_holiday_mode = false;
 
+// Chance for the repair ship to consume repair commodities. Default: 1 per 20 shots.
+float repairship_chance = 0.05;
+
+// Rate of repair from a repair ship as a percentage of normal repair cycles. Default: 100% of repair_per_repair_cycle per 40 shots.
+float repairship_rate = 0.025;
+
 //pob sounds struct
 POBSOUNDS pbsounds;
 
@@ -458,6 +464,14 @@ void LoadSettingsActual()
 						uint good = CreateID(ini.get_value_string(0));
 						uint quantity = ini.get_value_int(1);
 						shield_power_items[good] = quantity;
+					}
+					else if (ini.is_value("repairship_chance"))
+					{
+						repairship_chance = ini.get_value_float(0);
+					}
+					else if (ini.is_value("repairship_rate"))
+					{
+						repairship_rate = ini.get_value_float(0);
 					}
 					else if (ini.is_value("set_new_spawn"))
 					{
@@ -1877,6 +1891,55 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, unsigned short p1, float damage
 				if (damage < 0.0f)
 					damage = 0.0f;
 				//ConPrint(L"%0.0f\n", damage);
+			}
+
+			uint client = HkGetClientIDByShip(dmg->get_inflictor_id());
+			if (client)
+			{
+				Archetype::Ship* TheShipArch = Archetype::GetShip(Players[client].iShipArchetype);
+				if (TheShipArch->iShipClass == 19)
+				{
+					float curr, max;
+					pub::SpaceObj::GetHealth(iDmgToSpaceID, curr, max);
+					float projecteddamage = curr - damage;
+					float amounttoheal = curr;
+					if ((projecteddamage <= 2) && (projecteddamage > 0))
+					{
+						returncode = SKIPPLUGINS_NOFUNCTIONCALL;
+						amounttoheal = repair_per_repair_cycle * repairship_rate;
+						float testhealth = curr + amounttoheal;
+
+						if (testhealth > max)
+						{
+							//HkMsgU(L"DEBUG: Health would be superior to max");
+							dmg->add_damage_entry(1, max, (DamageEntry::SubObjFate)0);
+							return;
+						}
+						else
+						{
+							// Check that the ship has the required commodities.
+							int hold_size;
+							list<CARGO_INFO> cargo;
+							HkEnumCargo((const wchar_t*)Players.GetActiveCharacterName(client), cargo, hold_size);
+							foreach(set_base_repair_items, REPAIR_ITEM, item)
+							{
+								uint good = item->good;
+								for (list<CARGO_INFO>::iterator ci = cargo.begin(); ci != cargo.end(); ++ci)
+								{
+									if (ci->iArchID == good)
+									{
+										float roll = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+										if (roll < repairship_chance)
+											pub::Player::RemoveCargo(client, ci->iID, 1);
+										dmg->add_damage_entry(p1, testhealth, (DamageEntry::SubObjFate)0);
+										return;
+									}
+								}
+							}
+							return;
+						}
+					}
+				}
 			}
 
 			// This call is for us, skip all plugins.		
