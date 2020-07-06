@@ -1909,35 +1909,33 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, unsigned short p1, float damage
 						amounttoheal = repair_per_repair_cycle * repairship_rate;
 						float testhealth = curr + amounttoheal;
 
-						if (testhealth > max)
+						// Check that the ship has the required commodities.
+						int hold_size;
+						list<CARGO_INFO> cargo;
+						HkEnumCargo((const wchar_t*)Players.GetActiveCharacterName(client), cargo, hold_size);
+						foreach(set_base_repair_items, REPAIR_ITEM, item)
 						{
-							//HkMsgU(L"DEBUG: Health would be superior to max");
-							dmg->add_damage_entry(1, max, (DamageEntry::SubObjFate)0);
-							return;
-						}
-						else
-						{
-							// Check that the ship has the required commodities.
-							int hold_size;
-							list<CARGO_INFO> cargo;
-							HkEnumCargo((const wchar_t*)Players.GetActiveCharacterName(client), cargo, hold_size);
-							foreach(set_base_repair_items, REPAIR_ITEM, item)
+							uint good = item->good;
+							for (list<CARGO_INFO>::iterator ci = cargo.begin(); ci != cargo.end(); ++ci)
 							{
-								uint good = item->good;
-								for (list<CARGO_INFO>::iterator ci = cargo.begin(); ci != cargo.end(); ++ci)
+								if (ci->iArchID == good)
 								{
-									if (ci->iArchID == good)
+									float roll = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+									if (roll < repairship_chance)
+										pub::Player::RemoveCargo(client, ci->iID, 1);
+									if (testhealth > max)
 									{
-										float roll = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
-										if (roll < repairship_chance)
-											pub::Player::RemoveCargo(client, ci->iID, 1);
-										dmg->add_damage_entry(p1, testhealth, (DamageEntry::SubObjFate)0);
-										return;
+										dmg->add_damage_entry(1, max, (DamageEntry::SubObjFate)0);
 									}
+									else
+									{
+										dmg->add_damage_entry(p1, testhealth, (DamageEntry::SubObjFate)0);
+									}
+									return;
 								}
 							}
-							return;
 						}
+						return;
 					}
 				}
 			}
