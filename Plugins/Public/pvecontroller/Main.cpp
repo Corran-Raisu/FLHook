@@ -43,6 +43,14 @@ struct stDropInfo {
 	float fChance;
 };
 
+struct stDropGroup {
+	multimap<uint, stDropInfo> mmapDropInfo;
+};
+
+struct stDropTable {
+	map<uint, stDropGroup> mmapDropGroup;
+};
+
 CLIENT_DATA aClientData[250];
 map<uint, stBountyBasePayout> mapBountyPayouts;
 map<uint, stBountyBasePayout> mapBountyShipPayouts;
@@ -51,7 +59,7 @@ map<uint, float> mapBountyArmorScales;
 map<uint, float> mapBountySystemScales;
 list<uint> lstRecordedBountyObjs;
 
-multimap<uint, stDropInfo> mmapDropInfo;
+map<uint, stDropTable> mmapDropTable;
 
 int set_iPluginDebug = 0;
 float set_fMaximumRewardRep = 0.0f;
@@ -201,7 +209,7 @@ void LoadSettingsNPCDrops()
 	string scPluginCfgFile = string(szCurDir) + "\\flhook_plugins\\pvecontroller.cfg";
 
 	// Clear the drop tables.
-	mmapDropInfo.clear();
+	mmapDropTable.clear();
 	iLoadedNPCDropClasses = 0;
 
 	// Load the big stuff
@@ -224,13 +232,15 @@ void LoadSettingsNPCDrops()
 					{
 						stDropInfo drop;
 						int iClass = ini.get_value_int(0);
+						uint iGroup = ini.get_value_int(3);
 						string szGood = ini.get_value_string(1);
 						drop.uGoodID = CreateID(szGood.c_str());
 						drop.fChance = ini.get_value_float(2);
-						mmapDropInfo.insert(make_pair(iClass, drop));
+						mmapDropTable[iClass].mmapDropGroup[iGroup].mmapDropInfo.insert(make_pair(iGroup, drop));
+						
 						++iLoadedNPCDropClasses;
 						if (set_iPluginDebug)
-							ConPrint(L"PVECONTROLLER: Loaded class %u drop %s (0x%08X), %f chance.\n", iClass, stows(szGood).c_str(), CreateID(szGood.c_str()), drop.fChance);
+							ConPrint(L"PVECONTROLLER: Loaded class %u drop %s (0x%08X), %f chance for LootGroup %u.\n", iClass, stows(szGood).c_str(), CreateID(szGood.c_str()), drop.fChance, iGroup);
 					}
 				}
 			}
@@ -609,24 +619,55 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, unsigned short p1, float damage
 
 			// Process drops if enabled.
 			if (set_bDropsEnabled) {
-				for (auto it = mmapDropInfo.begin(); it != mmapDropInfo.end(); it++) {
-					if (it->first == victimShiparch->iShipClass) {
-						if (set_iPluginDebug >= PLUGIN_DEBUG_VERYVERBOSE)
-							PrintUserCmdText(iDmgFrom, L"PVECONTROLLER: class %d drop entry found, %f chance to drop 0x%08X.\n", it->first, it->second.fChance, it->second.uGoodID);
-						float roll = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
-						if (roll < it->second.fChance) {
+				uint iShipGroup = 0;
+				switch (victimShiparch->iShipClass)
+				{
+					case 0: case 1: case 2: case 3: case 4: case 5:
+						iShipGroup = 1;
+						break;
+					case 6: case 7: case 8: case 9: case 10:
+						iShipGroup = 2;
+						break;
+					case 11: case 12:
+						iShipGroup = 3;
+						break;
+					case 13: case 14:
+						iShipGroup = 4;
+						break;
+					case 15:
+						iShipGroup = 5;
+						break;
+					case 16: case 17: case 18:
+						iShipGroup = 6;
+						break;
+					default:
+						break;
+				}
+				map<uint, stDropTable>::iterator iter = mmapDropTable.find(iShipGroup);
+				if (iter != mmapDropTable.end()) {
+					uint tableroll = rand() % (iter->second.mmapDropGroup.size() + 1);
+					PrintUserCmdText(iDmgFrom, L"PVECONTROLLER: Ship Class Group: %u, Loot Group: %u", iter->first, tableroll);
+					for (auto dt = iter->second.mmapDropGroup.begin(); dt != iter->second.mmapDropGroup.end(); dt++) {
+						if (dt->first==0 || dt->first==tableroll) //Loot Table 0 will always roll along with the table selected by tableroll.
+						for (auto it = dt->second.mmapDropInfo.begin(); it != dt->second.mmapDropInfo.end(); it++) {
 							if (set_iPluginDebug >= PLUGIN_DEBUG_VERYVERBOSE)
-								PrintUserCmdText(iDmgFrom, L"PVECONTROLLER: Rolled %f, won a drop!\n", roll);
+								PrintUserCmdText(iDmgFrom, L"PVECONTROLLER: LootGroup %d drop entry found, %f chance to drop 0x%08X.\n", it->first, it->second.fChance, it->second.uGoodID);
+							float roll = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+							if (roll < it->second.fChance) {
+								if (set_iPluginDebug >= PLUGIN_DEBUG_VERYVERBOSE)
+									PrintUserCmdText(iDmgFrom, L"PVECONTROLLER: Rolled %f, won a drop!\n", roll);
 
-							Vector vLoc = { 0.0f, 0.0f, 0.0f };
-							Matrix mRot = { 0.0f, 0.0f, 0.0f };
-							pub::SpaceObj::GetLocation(iDmgToSpaceID, vLoc, mRot);
-							vLoc.x += 30.0;
-							Server.MineAsteroid(uKillerSystem, vLoc, set_uLootCrateID, it->second.uGoodID, 1, iDmgFrom);
+								Vector vLoc = { 0.0f, 0.0f, 0.0f };
+								Matrix mRot = { 0.0f, 0.0f, 0.0f };
+								pub::SpaceObj::GetLocation(iDmgToSpaceID, vLoc, mRot);
+								vLoc.x += 30.0;
+								Server.MineAsteroid(uKillerSystem, vLoc, set_uLootCrateID, it->second.uGoodID, 1, iDmgFrom);
+								break;
+							}
+							else
+								if (set_iPluginDebug >= PLUGIN_DEBUG_VERYVERBOSE)
+									PrintUserCmdText(iDmgFrom, L"PVECONTROLLER: Rolled %f, no drop for you.\n", roll);
 						}
-						else
-							if (set_iPluginDebug >= PLUGIN_DEBUG_VERYVERBOSE)
-								PrintUserCmdText(iDmgFrom, L"PVECONTROLLER: Rolled %f, no drop for you.\n", roll);
 					}
 				}
 			}
