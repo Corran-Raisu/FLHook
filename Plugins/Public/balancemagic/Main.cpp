@@ -25,9 +25,10 @@ typedef unsigned char byte;
 #include <FLHook.h>
 #include <plugin.h>
 #include <math.h>
+#include <PluginUtilities.h>
 
 bool UserCmd_SnacClassic(uint iClientID, const wstring &wscCmd, const wstring &wscParam, const wchar_t *usage);
-
+float HandleEquipmentDamage(DamageList *dmg, ushort subObjID, float setHealth, DamageEntry::SubObjFate fate, uint iDmgToSpaceID, float multiplier = 1.0f);
 typedef void(*wprintf_fp)(std::wstring format, ...);
 typedef bool(*_UserCmdProc)(uint, const wstring &, const wstring &, const wchar_t*);
 
@@ -40,6 +41,11 @@ struct DamageMultiplier {
 	float battlecruiser;
 	float battleship;
 	float solar;
+};
+
+struct EquipDamageMultipliers {
+	float equipMultiplier;
+	float pierceMultiplier;
 };
 
 struct USERCMD
@@ -55,8 +61,12 @@ USERCMD UserCmds[] =
 };
 
 int iLoadedDamageAdjusts = 0;
+int iLoadedAllowEnergyDamageAdjusts = 0;
+int iLoadedPiercingWeapons = 0;
 
 map<uint, DamageMultiplier> mapDamageAdjust;
+map<uint, EquipDamageMultipliers> mapPiercingWeapons;
+map<uint, float> mapAllowEnergyDamageAdjust;
 
 /// A return code to indicate to FLHook if we want the hook processing to continue.
 PLUGIN_RETURNCODE returncode;
@@ -96,11 +106,33 @@ void LoadSettings()
 					++iLoadedDamageAdjusts;
 				}
 			}
+			if (ini.is_header("AllowEnergyDamage"))
+			{
+				while (ini.read_value())
+				{
+					mapAllowEnergyDamageAdjust[CreateID(ini.get_name_ptr())] = ini.get_value_float(0);
+					ConPrint(L"Loaded Energy Damage Weapon: %s (%u)- %0.2f", ini.get_name(), CreateID(ini.get_name_ptr()), ini.get_value_float(0));
+					++iLoadedAllowEnergyDamageAdjusts;
+				}
+			}
+			if (ini.is_header("PiercingWeapons"))
+			{
+				while (ini.read_value())
+				{
+					EquipDamageMultipliers stEntry = { 0.0f };
+					stEntry.equipMultiplier = ini.get_value_float(0);
+					stEntry.pierceMultiplier = ini.get_value_float(1);
+					mapPiercingWeapons[CreateID(ini.get_name_ptr())] = stEntry;
+					++iLoadedPiercingWeapons;
+				}
+			}
 		}
 		ini.close();
 	}
 
 	ConPrint(L"BALANCEMAGIC: Loaded %u damage adjusts.\n", iLoadedDamageAdjusts);
+	ConPrint(L"BALANCEMAGIC: Loaded %u energy damage exceptions.\n", iLoadedAllowEnergyDamageAdjusts);
+	ConPrint(L"BALANCEMAGIC: Loaded %u piercing weapons.\n", iLoadedPiercingWeapons);
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
@@ -201,8 +233,80 @@ bool UserCmd_Process(uint iClientID, const wstring &wscCmd)
 void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealth, DamageEntry::SubObjFate fate)
 {
 	returncode = DEFAULT_RETURNCODE;
+
+	if (iDmgToSpaceID == 0 && iDmgTo != 0)
+		pub::Player::GetShip(iDmgTo, iDmgToSpaceID);
+
+	uint iCause = dmg->get_cause();
+	wstring wscType = L"";
+	switch (iCause)
+	{
+	case 0x05:
+		wscType = L"Missile/Torpedo";
+		break;
+	case 0x07:
+		wscType = L"Mine";
+		break;
+	case 0x06: case 0xC0: case 0x15:
+		wscType = L"Wasp/Hornet";
+		break;
+	case 0x01:
+		wscType = L"Collision";
+		break;
+	case 0x02:
+		wscType = L"Gun";
+		break;
+	default:
+		wscType = L"Gun";
+		break;
+	}
+
+	wstring wscMsg = L"HkCb_AddDmgEntry - cause: %cause, subObjID: %u, setHealth: %0.2f, fate: %u, munition: %u, dmgtospaceid: %u, dmgto: %u \n";
+	wscMsg = ReplaceStr(wscMsg, L"%cause", wscType);
+	ConPrint(wscMsg, subObjID, setHealth, fate, iDmgMunitionID, iDmgToSpaceID, iDmgTo);
+
+	if (subObjID == 2)
+	{
+		if (fate == 0)
+		{
+			ConPrint(L"Skipping normal powercore damage entry. \n");
+			returncode = PLUGIN_RETURNCODE::SKIPPLUGINS_NOFUNCTIONCALL;
+		}
+		else
+		{
+			ConPrint(L"Allowing custom powercore damage entry. \n");
+		}
+		return;
+	}
+
 	if (iDmgToSpaceID && iDmgMunitionID)
 	{
+		if (subObjID > 1 && subObjID < 65521) //Handle this first because this projectile might end up hitting the hull. This way we can damage still DamageAdjust the hull hit.
+		{
+			map<uint, EquipDamageMultipliers>::iterator iter = mapPiercingWeapons.find(iDmgMunitionID);
+			if (iter != mapPiercingWeapons.end())
+			{
+				float setDamage = HandleEquipmentDamage(dmg, subObjID, setHealth, fate, iDmgToSpaceID, iter->second.equipMultiplier);
+
+				if (iter->second.pierceMultiplier > 0.0f) //If piercing multiplier is not 0, handle the rest as if the damage hit the hull.
+				{
+					float curr, max;
+					pub::SpaceObj::GetHealth(iDmgToSpaceID, curr, max);
+					ConPrint(L"Dealing %0.2f * %0.2f (%0.2f) piercing damage to ship. Expected Hull: %0.2f / %0.2f \n", setDamage, iter->second.pierceMultiplier, setDamage * iter->second.pierceMultiplier, curr - setDamage * iter->second.pierceMultiplier, max);
+					setHealth = curr - setDamage * iter->second.pierceMultiplier;
+					subObjID = 1;
+				}
+			}
+		}
+		else
+		{
+			map<uint, float>::iterator iter = mapAllowEnergyDamageAdjust.find(iDmgMunitionID);
+			if (iter != mapAllowEnergyDamageAdjust.end())
+			{
+				if (subObjID == 1)
+					HandleEquipmentDamage(dmg, 2, iter->second, (DamageEntry::SubObjFate)0, iDmgToSpaceID, 1.0f);
+			}
+		}
 		map<uint, DamageMultiplier>::iterator iter = mapDamageAdjust.find(iDmgMunitionID);
 		if (iter != mapDamageAdjust.end())
 		{
@@ -245,24 +349,60 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 				else if (targetShipClass < 19)
 					setHealth = curr - (curr - setHealth) * iter->second.battleship;
 			}
+		}
+		// Fix wrong shield rebuild time bug.
+		if (setHealth < 0)
+			setHealth = 0;
 
-			// Fix wrong shield rebuild time bug.
-			if (setHealth < 0)
-				setHealth = 0;
+		// Fix wrong death message bug.
+		if (iDmgTo && subObjID == 1)
+			ClientInfo[iDmgTo].dmgLast = *dmg;
 
-			// Fix wrong death message bug.
-			if (iDmgTo && subObjID == 1)
-				ClientInfo[iDmgTo].dmgLast = *dmg;
+		// Add damage entry instead of FLHook Core.
+		dmg->add_damage_entry(subObjID, setHealth, fate);
+		returncode = SKIPPLUGINS_NOFUNCTIONCALL;
 
-			// Add damage entry instead of FLHook Core.
-			dmg->add_damage_entry(subObjID, setHealth, fate);
-			returncode = SKIPPLUGINS_NOFUNCTIONCALL;
+		iDmgTo = 0;
+		iDmgToSpaceID = 0;
+		iDmgMunitionID = 0;
+	}
+}
 
-			iDmgTo = 0;
-			iDmgToSpaceID = 0;
-			iDmgMunitionID = 0;
+float HandleEquipmentDamage(DamageList *dmg, ushort subObjID, float setHealth, DamageEntry::SubObjFate fate, uint iDmgToSpaceID, float multiplier)
+{
+	unsigned int iDunno = 0;
+	IObjInspectImpl *obj = NULL;
+
+	if (GetShipInspect(iDmgToSpaceID, obj, iDunno)) {
+		if (obj) {
+			//Need to get the health of the equipment that was hit so we can determine damage for multipliers.
+			float setDamage, curr, max;
+			CShip* cship = (CShip*)HkGetEqObjFromObjRW((IObjRW*)obj);
+			if (subObjID == 2)
+			{
+				setDamage = setHealth;
+				curr = cship->get_power();
+				setHealth = curr - setHealth;
+				if (setHealth < 0)
+					setHealth = 0;
+				dmg->add_damage_entry(2, setHealth, (DamageEntry::SubObjFate)0);
+			}
+			else
+			{
+				cship->get_sub_obj_hit_pts(subObjID, curr);
+				setDamage =  curr - setHealth;
+				setHealth = curr - setDamage * multiplier;
+				if (setHealth < 0)
+				{
+					setHealth = 0;
+					fate = (DamageEntry::SubObjFate)2;
+				}
+				dmg->add_damage_entry(subObjID, setHealth, fate);
+			}
+			return setDamage;
 		}
 	}
+	return 0.0f;
 }
 
 void Plugin_Communication_Callback(PLUGIN_MESSAGE msg, void* data)
