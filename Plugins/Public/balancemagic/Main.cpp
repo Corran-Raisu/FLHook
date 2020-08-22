@@ -240,43 +240,11 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 	if (iDmgToSpaceID == 0 && iDmgTo != 0)
 		pub::Player::GetShip(iDmgTo, iDmgToSpaceID);
 
-	//uint iCause = dmg->get_cause();
-	//wstring wscType = L"";
-	//switch (iCause)
-	//{
-	//case 0x05:
-	//	wscType = L"Missile/Torpedo";
-	//	break;
-	//case 0x07:
-	//	wscType = L"Mine";
-	//	break;
-	//case 0x06: case 0xC0: case 0x15:
-	//	wscType = L"Wasp/Hornet";
-	//	break;
-	//case 0x01:
-	//	wscType = L"Collision";
-	//	break;
-	//case 0x02:
-	//	wscType = L"Gun";
-	//	break;
-	//default:
-	//	wscType = L"Gun";
-	//	break;
-	//}
-	//wstring wscMsg = L"HkCb_AddDmgEntry - cause: %cause, subObjID: %u, setHealth: %0.2f, fate: %u, munition: %u, dmgtospaceid: %u, dmgto: %u \n";
-	//wscMsg = ReplaceStr(wscMsg, L"%cause", wscType);
-	//ConPrint(wscMsg, subObjID, setHealth, fate, iDmgMunitionID, iDmgToSpaceID, iDmgTo);
-
 	if (subObjID == 2)
 	{
 		if (fate == 0)
 		{
-			ConPrint(L"Skipping normal powercore damage entry. \n");
 			returncode = PLUGIN_RETURNCODE::SKIPPLUGINS_NOFUNCTIONCALL;
-		}
-		else
-		{
-			ConPrint(L"Allowing custom powercore damage entry. \n");
 		}
 		return;
 	}
@@ -289,7 +257,6 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 			map<uint, EquipDamageMultipliers>::iterator iter = mapPiercingWeapons.find(iDmgMunitionID);
 			if (iter != mapPiercingWeapons.end())
 			{
-				ConPrint(L"PiercingWeapon found: %0.2f, %0.2f, %0.2f \n", iter->second.equipMultiplier, iter->second.pierceMultiplier, iter->second.pierceShieldMultiplier);
 				float setDamage = 0;
 				float pierceMult = 0;
 				if (subObjID != 65521)
@@ -304,14 +271,12 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 					bool bShieldsUp;
 					pub::SpaceObj::GetShieldHealth(iDmgToSpaceID, curr, max, bShieldsUp);
 					setDamage = HandleEquipmentDamage(dmg, subObjID, setHealth, fate, iDmgToSpaceID, 1, daMult);
-					ConPrint(L"Dealing %0.2f * %0.2f (%0.2f) shield damage before piercing. Expected Shield: %0.2f / %0.2f \n", setDamage, daMult, setDamage * daMult, curr - setDamage * daMult, max);
 				}
 
 				if (pierceMult > 0.0f) //If piercing multiplier is not 0, handle the rest as if the damage hit the hull.
 				{
 					float curr, max;
 					pub::SpaceObj::GetHealth(iDmgToSpaceID, curr, max);
-					ConPrint(L"Dealing %0.2f * %0.2f (%0.2f) piercing damage to ship. Expected Hull: %0.2f / %0.2f \n", setDamage * daMult, pierceMult, setDamage * daMult * pierceMult, curr - setDamage * daMult * pierceMult, max);
 					setHealth = curr - setDamage * pierceMult;
 					subObjID = 1;
 				}
@@ -340,32 +305,6 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 				return; // If hit mounted equipment - do not continue with uninitialized variables.
 
 			setHealth = curr - (curr - setHealth) * daMult;
-
-			//// Deduce: if not fighter nor freighter, then it's obviously solar object.
-			//if (iTargetType != OBJ_FIGHTER && iTargetType != OBJ_FREIGHTER)
-			//{
-			//	setHealth = curr - (curr - setHealth) * iter->second.solar;
-			//}
-			//else
-			//{
-			//	uint iArchID;
-			//	pub::SpaceObj::GetSolarArchetypeID(iDmgToSpaceID, iArchID);
-			//	uint targetShipClass = Archetype::GetShip(iArchID)->iShipClass;
-			//	if (targetShipClass == 0 || targetShipClass == 1 || targetShipClass == 3)
-			//		setHealth = curr - (curr - setHealth) * iter->second.fighter;
-			//	else if (targetShipClass == 2 || targetShipClass == 4 || targetShipClass == 5 || targetShipClass == 19)
-			//		setHealth = curr - (curr - setHealth) * iter->second.freighter;
-			//	else if (targetShipClass < 11)
-			//		setHealth = curr - (curr - setHealth) * iter->second.transport;
-			//	else if (targetShipClass < 13)
-			//		setHealth = curr - (curr - setHealth) * iter->second.gunboat;
-			//	else if (targetShipClass < 15)
-			//		setHealth = curr - (curr - setHealth) * iter->second.cruiser;
-			//	else if (targetShipClass < 16)
-			//		setHealth = curr - (curr - setHealth) * iter->second.battlecruiser;
-			//	else if (targetShipClass < 19)
-			//		setHealth = curr - (curr - setHealth) * iter->second.battleship;
-			//}
 		}
 		// Fix wrong shield rebuild time bug.
 		if (setHealth < 0)
@@ -424,7 +363,6 @@ float HandleEquipmentDamage(DamageList *dmg, ushort subObjID, float setHealth, D
 					cship->get_sub_obj_hit_pts(subObjID, curr);
 					cship->get_sub_obj_max_hit_pts(subObjID, max);
 					setDamage = curr - setHealth;
-					ConPrint(L"Dealing %0.2f * %0.2f * %0.2f (%0.2f) equipment damage before piercing. Expected EqHP: %0.2f / %0.2f \n", setDamage, multiplier, daMult, setDamage * multiplier * daMult, curr - setDamage * multiplier * daMult, max);
 					setHealth = curr - setDamage * multiplier * daMult;
 					if (setHealth < 0)
 					{
