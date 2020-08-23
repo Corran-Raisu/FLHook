@@ -65,10 +65,12 @@ USERCMD UserCmds[] =
 int iLoadedDamageAdjusts = 0;
 int iLoadedAllowEnergyDamageAdjusts = 0;
 int iLoadedPiercingWeapons = 0;
+int iLoadedVampireWeapons = 0;
 
 map<uint, DamageMultiplier> mapDamageAdjust;
 map<uint, EquipDamageMultipliers> mapPiercingWeapons;
 map<uint, float> mapAllowEnergyDamageAdjust;
+map<uint, float> mapVampireWeapons;
 
 /// A return code to indicate to FLHook if we want the hook processing to continue.
 PLUGIN_RETURNCODE returncode;
@@ -129,6 +131,16 @@ void LoadSettings()
 					++iLoadedPiercingWeapons;
 				}
 			}
+			if (ini.is_header("VampireWeapons"))
+			{
+				while (ini.read_value())
+				{
+					uint vID = CreateID(ini.get_name_ptr());
+					mapVampireWeapons[vID] = ini.get_value_float(0);
+					ConPrint(L"Loaded %u as a vampire weapon with multiplier of %0.2f", vID, ini.get_value_float(0));
+					++iLoadedVampireWeapons;
+				}
+			}
 		}
 		ini.close();
 	}
@@ -136,6 +148,7 @@ void LoadSettings()
 	ConPrint(L"BALANCEMAGIC: Loaded %u damage adjusts.\n", iLoadedDamageAdjusts);
 	ConPrint(L"BALANCEMAGIC: Loaded %u energy damage exceptions.\n", iLoadedAllowEnergyDamageAdjusts);
 	ConPrint(L"BALANCEMAGIC: Loaded %u piercing weapons.\n", iLoadedPiercingWeapons);
+	ConPrint(L"BALANCEMAGIC: Loaded %u vampire weapons.\n", iLoadedVampireWeapons);
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
@@ -248,7 +261,7 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 		}
 		return;
 	}
-
+	float setDamage = 0;
 	if (iDmgToSpaceID && iDmgMunitionID)
 	{
 		float daMult = GetDamageAdjustMultiplier();
@@ -257,7 +270,6 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 			map<uint, EquipDamageMultipliers>::iterator iter = mapPiercingWeapons.find(iDmgMunitionID);
 			if (iter != mapPiercingWeapons.end())
 			{
-				float setDamage = 0;
 				float pierceMult = 0;
 				if (subObjID != 65521)
 				{
@@ -287,8 +299,7 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 			map<uint, float>::iterator iter = mapAllowEnergyDamageAdjust.find(iDmgMunitionID);
 			if (iter != mapAllowEnergyDamageAdjust.end())
 			{
-				if (subObjID == 1)
-					HandleEquipmentDamage(dmg, 2, iter->second, (DamageEntry::SubObjFate)0, iDmgToSpaceID, 1.0f);
+				HandleEquipmentDamage(dmg, 2, iter->second, (DamageEntry::SubObjFate)0, iDmgToSpaceID, 1.0f);
 			}
 		}
 
@@ -303,8 +314,10 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 				pub::SpaceObj::GetShieldHealth(iDmgToSpaceID, curr, max, bShieldsUp);
 			else
 				return; // If hit mounted equipment - do not continue with uninitialized variables.
-
 			setHealth = curr - (curr - setHealth) * daMult;
+
+			// Add damage entry instead of FLHook Core.
+			dmg->add_damage_entry(subObjID, setHealth, fate);
 		}
 		// Fix wrong shield rebuild time bug.
 		if (setHealth < 0)
@@ -314,14 +327,35 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 		if (iDmgTo && subObjID == 1)
 			ClientInfo[iDmgTo].dmgLast = *dmg;
 
-		// Add damage entry instead of FLHook Core.
-		dmg->add_damage_entry(subObjID, setHealth, fate);
 		returncode = SKIPPLUGINS_NOFUNCTIONCALL;
 
 		iDmgTo = 0;
 		iDmgToSpaceID = 0;
 		iDmgMunitionID = 0;
 	}
+
+	//uint iArchID;
+	//uint nSpaceID = dmg->get_inflictor_id();
+	//pub::SpaceObj::GetSolarArchetypeID(nSpaceID, iArchID);
+	//map<uint, float>::iterator iter = mapVampireWeapons.find(iArchID);
+	//if (iter != mapVampireWeapons.end())
+	//{
+	//	float curr, max;
+	//	bool bShieldsUp;
+	//	if (setDamage == 0)
+	//	{
+	//		if (subObjID == 1) // 1 is base (hull)
+	//			pub::SpaceObj::GetHealth(iDmgToSpaceID, curr, max);
+	//		else if (subObjID == 65521) // 65521 is shield (bubble, not equipment)
+	//			pub::SpaceObj::GetShieldHealth(iDmgToSpaceID, curr, max, bShieldsUp);
+	//		else
+	//			return;
+	//		setDamage = curr - setHealth;
+	//	}
+	//	pub::SpaceObj::GetHealth(nSpaceID, curr, max);
+	//	setHealth = curr + setDamage * iter->second;
+	//	pub::SpaceObj::SetRelativeHealth(nSpaceID, setHealth / max);
+	//}
 }
 
 float HandleEquipmentDamage(DamageList *dmg, ushort subObjID, float setHealth, DamageEntry::SubObjFate fate, uint iDmgToSpaceID, float multiplier, float daMult)
