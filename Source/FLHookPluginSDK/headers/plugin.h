@@ -251,7 +251,8 @@ enum PLUGIN_MESSAGE
 	CLIENT_CLOAK_INFO = 44,
 	COMBAT_DAMAGE_OVERRIDE = 45,
 	CUSTOM_JUMP = 47,
-	CUSTOM_REVERSE_TRANSACTION = 48
+	CUSTOM_REVERSE_TRANSACTION = 48,
+	COMBAT_LOG_KILL_OVERRIDE = 49
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -346,6 +347,12 @@ struct COMBAT_DAMAGE_OVERRIDE_STRUCT
 	uint iMunitionID;
 	uint iTargetTypeID;
 	float fDamageMultiplier;
+};
+
+struct COMBAT_LOG_KILL_OVERRIDE_STRUCT
+{
+	uint iDeadClientID;
+	uint iKillerClientID;
 };
 
 struct CUSTOM_JUMP_STRUCT
