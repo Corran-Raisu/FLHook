@@ -143,15 +143,18 @@ void __stdcall ShipDestroyed(DamageList *_dmg, DWORD *ecx, uint iKill)
 				uint iCause = dmg.get_cause();
 				uint iClientIDKiller = HkGetClientIDByShip(dmg.get_inflictor_id());
 
-				// Ask the damage log plugin if we need to do anything differently
-				COMBAT_LOG_KILL_OVERRIDE_STRUCT info;
-				info.iDeadClientID = iClientID;
-				Plugin_Communication(COMBAT_LOG_KILL_OVERRIDE, &info);
-				if (info.iKillerClientID != 0)
-				{
-					iClientIDKiller = info.iKillerClientID;
-					iCause = 0xFF;
+				// Ask the damage log plugin if we need to handle a self-kill differently.
+				if (iClientID == iClientIDKiller) {
+					COMBAT_LOG_KILL_OVERRIDE_STRUCT info;
+					info.iDeadClientID = iClientID;
+					Plugin_Communication(COMBAT_LOG_KILL_OVERRIDE, &info);
+					if (info.iKillerClientID != 0)
+					{
+						iClientIDKiller = info.iKillerClientID;
+						iCause = 0xFF;
+					}
 				}
+
 				wstring wscVictim = (wchar_t*)Players.GetActiveCharacterName(iClientID);
 				wscEvent += L" victim=" + wscVictim;
 				if (iClientIDKiller) {
