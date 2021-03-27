@@ -27,3 +27,4 @@ _ReSharper*/
 
 *.dll
 *.pdb
+*.vcxproj
