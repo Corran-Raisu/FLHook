@@ -33,7 +33,7 @@ float GetDamageAdjustMultiplier();
 typedef void(*wprintf_fp)(std::wstring format, ...);
 typedef bool(*_UserCmdProc)(uint, const wstring &, const wstring &, const wchar_t*);
 
-struct DamageMultiplier {
+struct ClassConfig { //Generalized naming of struct for reuse on different class-based values.
 	float fighter;
 	float freighter;
 	float transport;
@@ -42,12 +42,70 @@ struct DamageMultiplier {
 	float battlecruiser;
 	float battleship;
 	float solar;
+
+	//Since this struct is reused for different things, this switch statement is implemented as a function within the struct instead of duplicating the switch statement.
+	float GetShipClass(int shipclass, int defaultRet)
+	{
+		switch (shipclass)
+		{
+		case 0: case 1: case 3:
+			//0 - Light Fighter, 1 - Heavy Fighter, 3 - Very Heavy Fighter
+			return this->fighter;
+			break;
+		case 2: case 4: case 5: case 19:
+			//2 - Freighter, 4 - Super Heavy Fighter, 5 - Bomber, 19 - Repair Ship
+			return this->freighter;
+			break;
+		case 6: case 7: case 8: case 9: case 10:
+			//6 - Transport, 7 - Train, 8 - Heavy Transport, 9 - Super Train, 10 - Liner
+			return this->transport;
+			break;
+		case 11: case 12:
+			//11 - Gunship, 12 - Gunboat
+			return this->gunboat;
+			break;
+		case 13: case 14:
+			//13 - Destroyer, 14 - Cruiser
+			return this->cruiser;
+			break;
+		case 15:
+			// 15, Battlecruiser
+			return this->battlecruiser;
+			break;
+		case 16: case 17: case 18:
+			//16 - Battleship, 17 - Carrier, 18 - Dreadnought
+			return this->battleship;
+			break;
+		default:
+			return defaultRet;
+			break;
+		}
+	}
+	//Function made to remove duplicate code between different uses of struct
+	void LoadData(INI_Reader* ini)
+	{
+		this->fighter = ini->get_value_float(0);
+		this->freighter = ini->get_value_float(1) ? ini->get_value_float(1) : this->fighter;
+		this->transport = ini->get_value_float(2) ? ini->get_value_float(2) : this->freighter;
+		this->gunboat = ini->get_value_float(3) ? ini->get_value_float(3) : this->transport;
+		this->cruiser = ini->get_value_float(4) ? ini->get_value_float(4) : this->gunboat;
+		this->battlecruiser = ini->get_value_float(5) ? ini->get_value_float(5) : this->cruiser;
+		this->battleship = ini->get_value_float(6) ? ini->get_value_float(6) : this->battlecruiser;
+		this->solar = ini->get_value_float(7) ? ini->get_value_float(7) : this->battleship;
+	}
 };
 
-struct EquipDamageMultipliers {
+struct MagicWeapon {
+	ClassConfig DamageMultiplier; //Class-based DamageMultiplier
+	ClassConfig RepairFlats; //Class-based Repair flat value
+	ClassConfig RepairPercent; //Class-based Repair percentage value
+
+	//Misc weapon configs.
 	float equipMultiplier;
 	float pierceMultiplier;
 	float pierceShieldMultiplier;
+	float vampPercentage;
+	float energyDamage;
 };
 
 struct USERCMD
@@ -66,11 +124,14 @@ int iLoadedDamageAdjusts = 0;
 int iLoadedAllowEnergyDamageAdjusts = 0;
 int iLoadedPiercingWeapons = 0;
 int iLoadedVampireWeapons = 0;
+int iLoadedRepairTools = 0;
 
-map<uint, DamageMultiplier> mapDamageAdjust;
-map<uint, EquipDamageMultipliers> mapPiercingWeapons;
-map<uint, float> mapAllowEnergyDamageAdjust;
-map<uint, float> mapVampireWeapons;
+map<uint, MagicWeapon> mapMagicWeapons;
+
+//map<uint, DamageMultiplier> mapDamageAdjust;
+//map<uint, EquipDamageMultipliers> mapPiercingWeapons;
+//map<uint, float> mapAllowEnergyDamageAdjust;
+//map<uint, float> mapVampireWeapons;
 
 /// A return code to indicate to FLHook if we want the hook processing to continue.
 PLUGIN_RETURNCODE returncode;
@@ -80,7 +141,7 @@ void LoadSettings()
 {
 	returncode = DEFAULT_RETURNCODE;
 
-	mapDamageAdjust.clear();
+	mapMagicWeapons.clear();
 	iLoadedDamageAdjusts = 0;
 
 	// The path to the configuration file.
@@ -97,25 +158,19 @@ void LoadSettings()
 			{
 				while (ini.read_value())
 				{
-					DamageMultiplier stEntry = { 0.0f };
-					stEntry.fighter = ini.get_value_float(0);
-					stEntry.freighter = ini.get_value_float(1) ? ini.get_value_float(1) : stEntry.fighter;
-					stEntry.transport = ini.get_value_float(2) ? ini.get_value_float(2) : stEntry.freighter;
-					stEntry.gunboat = ini.get_value_float(3) ? ini.get_value_float(3) : stEntry.transport;
-					stEntry.cruiser = ini.get_value_float(4) ? ini.get_value_float(4) : stEntry.gunboat;
-					stEntry.battlecruiser = ini.get_value_float(5) ? ini.get_value_float(5) : stEntry.cruiser;
-					stEntry.battleship = ini.get_value_float(6) ? ini.get_value_float(6) : stEntry.battlecruiser;
-					stEntry.solar = ini.get_value_float(7) ? ini.get_value_float(7) : stEntry.battleship;
-					mapDamageAdjust[CreateID(ini.get_name_ptr())] = stEntry;
+					ClassConfig stEntry = { 0.0f };
+					stEntry.LoadData(&ini);
+					mapMagicWeapons[CreateID(ini.get_name_ptr())].DamageMultiplier = stEntry;
+					ConPrint(L"Damage Multiplier Config Loaded: %u - %0.2f, %0.2f, %0.2f, %0.2f, %0.2f, %0.2f, %0.2f \n", CreateID(ini.get_name_ptr()), mapMagicWeapons[CreateID(ini.get_name_ptr())].DamageMultiplier.fighter, mapMagicWeapons[CreateID(ini.get_name_ptr())].DamageMultiplier.freighter, mapMagicWeapons[CreateID(ini.get_name_ptr())].DamageMultiplier.transport, mapMagicWeapons[CreateID(ini.get_name_ptr())].DamageMultiplier.gunboat, mapMagicWeapons[CreateID(ini.get_name_ptr())].DamageMultiplier.cruiser, mapMagicWeapons[CreateID(ini.get_name_ptr())].DamageMultiplier.battlecruiser, mapMagicWeapons[CreateID(ini.get_name_ptr())].DamageMultiplier.battleship);
 					++iLoadedDamageAdjusts;
 				}
 			}
-			if (ini.is_header("AllowEnergyDamage"))
+			if (ini.is_header("EnergyDamageWeapons"))
 			{
 				while (ini.read_value())
 				{
-					mapAllowEnergyDamageAdjust[CreateID(ini.get_name_ptr())] = ini.get_value_float(0);
-					ConPrint(L"Loaded Energy Damage Weapon: %s (%u)- %0.2f", ini.get_name(), CreateID(ini.get_name_ptr()), ini.get_value_float(0));
+					mapMagicWeapons[CreateID(ini.get_name_ptr())].energyDamage = ini.get_value_float(0);
+					ConPrint(L"Energy Damage Config Loaded: %u - %0.2f \n", CreateID(ini.get_name_ptr()), mapMagicWeapons[CreateID(ini.get_name_ptr())].energyDamage);
 					++iLoadedAllowEnergyDamageAdjusts;
 				}
 			}
@@ -123,11 +178,10 @@ void LoadSettings()
 			{
 				while (ini.read_value())
 				{
-					EquipDamageMultipliers stEntry = { 0.0f };
-					stEntry.equipMultiplier = ini.get_value_float(0);
-					stEntry.pierceMultiplier = ini.get_value_float(1);
-					stEntry.pierceShieldMultiplier = ini.get_value_float(2);
-					mapPiercingWeapons[CreateID(ini.get_name_ptr())] = stEntry;
+					mapMagicWeapons[CreateID(ini.get_name_ptr())].equipMultiplier = ini.get_value_float(0);
+					mapMagicWeapons[CreateID(ini.get_name_ptr())].pierceMultiplier = ini.get_value_float(1);
+					mapMagicWeapons[CreateID(ini.get_name_ptr())].pierceShieldMultiplier = ini.get_value_float(2);
+					ConPrint(L"Piercing Config Loaded: %u - %0.2f, %0.2f, %0.2f \n", CreateID(ini.get_name_ptr()), mapMagicWeapons[CreateID(ini.get_name_ptr())].equipMultiplier, mapMagicWeapons[CreateID(ini.get_name_ptr())].pierceMultiplier, mapMagicWeapons[CreateID(ini.get_name_ptr())].pierceShieldMultiplier);
 					++iLoadedPiercingWeapons;
 				}
 			}
@@ -136,9 +190,27 @@ void LoadSettings()
 				while (ini.read_value())
 				{
 					uint vID = CreateID(ini.get_name_ptr());
-					mapVampireWeapons[vID] = ini.get_value_float(0);
-					ConPrint(L"Loaded %u as a vampire weapon with multiplier of %0.2f", vID, ini.get_value_float(0));
+					mapMagicWeapons[vID].vampPercentage = ini.get_value_float(0);
+					ConPrint(L"Vampiric Config Loaded: %u - %0.2f \n", CreateID(ini.get_name_ptr()), mapMagicWeapons[CreateID(ini.get_name_ptr())].vampPercentage);
 					++iLoadedVampireWeapons;
+				}
+			}
+			if (ini.is_header("RepairTools"))
+			{
+				while (ini.read_value())
+				{
+					ClassConfig stEntry = { 0.0f };
+					stEntry.LoadData(&ini);
+
+					if (stEntry.fighter>=1)
+						mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairFlats = stEntry;
+					else
+						mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairPercent = stEntry;
+					if (stEntry.fighter>=1)
+						ConPrint(L"Repair Tool (Flat) Loaded: %u - %0.2f, %0.2f, %0.2f, %0.2f, %0.2f, %0.2f, %0.2f \n", CreateID(ini.get_name_ptr()), mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairFlats.fighter, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairFlats.freighter, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairFlats.transport, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairFlats.gunboat, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairFlats.cruiser, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairFlats.battlecruiser, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairFlats.battleship);
+					else
+						ConPrint(L"Repair Tool (Percent) Loaded: %u - %0.2f, %0.2f, %0.2f, %0.2f, %0.2f, %0.2f, %0.2f \n", CreateID(ini.get_name_ptr()), mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairPercent.fighter, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairPercent.freighter, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairPercent.transport, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairPercent.gunboat, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairPercent.cruiser, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairPercent.battlecruiser, mapMagicWeapons[CreateID(ini.get_name_ptr())].RepairPercent.battleship);
+					++iLoadedRepairTools;
 				}
 			}
 		}
@@ -149,6 +221,7 @@ void LoadSettings()
 	ConPrint(L"BALANCEMAGIC: Loaded %u energy damage exceptions.\n", iLoadedAllowEnergyDamageAdjusts);
 	ConPrint(L"BALANCEMAGIC: Loaded %u piercing weapons.\n", iLoadedPiercingWeapons);
 	ConPrint(L"BALANCEMAGIC: Loaded %u vampire weapons.\n", iLoadedVampireWeapons);
+	ConPrint(L"BALANCEMAGIC: Loaded %u repair tools.\n", iLoadedRepairTools);
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
@@ -250,10 +323,10 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 {
 	returncode = DEFAULT_RETURNCODE;
 
-	if (iDmgToSpaceID == 0 && iDmgTo != 0)
+	if (iDmgToSpaceID == 0 && iDmgTo != 0) //Equipment hits do not have an iDmgToSpaceID but they do have an iDmgTo. Can use that to correct iDmgToSpaceID for player-related damage.
 		pub::Player::GetShip(iDmgTo, iDmgToSpaceID);
 
-	if (subObjID == 2)
+	if (subObjID == 2) //Normal energy damage is completely blocked. Use Energy Damage config for Balance Magic to have weapons drain powercore. This avoids the 100% power refill bug.
 	{
 		if (fate == 0)
 		{
@@ -261,20 +334,49 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 		}
 		return;
 	}
-	float setDamage = 0;
+
+	float setDamage = 0.0f;
 	if (iDmgToSpaceID && iDmgMunitionID)
 	{
-		float daMult = GetDamageAdjustMultiplier();
-		if (subObjID > 1) //Handle this first because this projectile might end up hitting the hull. This way we can damage still DamageAdjust the hull hit.
+		map<uint, MagicWeapon>::iterator iter = mapMagicWeapons.find(iDmgMunitionID);
+		if (iter != mapMagicWeapons.end()) //Reworked code to use a single map. This allows us to check for a weapon once and have all the weapon config data we need later.
 		{
-			map<uint, EquipDamageMultipliers>::iterator iter = mapPiercingWeapons.find(iDmgMunitionID);
-			if (iter != mapPiercingWeapons.end())
+			ConPrint(L"A Magic Weapon just hit something.\n");
+			uint iTargetType;
+			float daMult = 0.0f;
+			float repFlat = 0.0f;
+			float repPerc = 0.0f;
+
+			pub::SpaceObj::GetType(iDmgToSpaceID, iTargetType);
+			if (iTargetType != OBJ_FIGHTER && iTargetType != OBJ_FREIGHTER)
 			{
-				float pierceMult = 0;
+				ConPrint(L"The target is a solar.\n");
+				daMult = iter->second.DamageMultiplier.solar;
+				repFlat = iter->second.RepairFlats.solar;
+				repPerc = iter->second.RepairPercent.solar;
+			}
+			else
+			{
+				uint iArchID;
+				pub::SpaceObj::GetSolarArchetypeID(iDmgToSpaceID, iArchID);
+				uint targetShipClass = Archetype::GetShip(iArchID)->iShipClass;
+
+				ConPrint(L"The target is a class %u ship\n", targetShipClass);
+
+				daMult = iter->second.DamageMultiplier.GetShipClass(targetShipClass, 1);
+				repFlat = iter->second.RepairFlats.GetShipClass(targetShipClass, 0);
+				repPerc = iter->second.RepairPercent.GetShipClass(targetShipClass, 0);
+			}
+
+			if (subObjID > 1) //Handle this first because this projectile might end up hitting the hull. This way we can damage still DamageAdjust the hull hit.
+			{
+				ConPrint(L"The target's shield or equipment was hit.\n");
+				float pierceMult = 0.0f;
 				if (subObjID != 65521)
 				{
 					pierceMult = iter->second.pierceMultiplier;
 					setDamage = HandleEquipmentDamage(dmg, subObjID, setHealth, fate, iDmgToSpaceID, iter->second.equipMultiplier, daMult);
+					ConPrint(L"Equipment Hit -- Magic Weapon has a %0.2f damage multiplier, %0.2f pierce multiplier, %0.2f equipment damage multiplier. Damage Dealt: %0.2f\n", daMult, iter->second.pierceMultiplier, iter->second.equipMultiplier, setDamage * daMult);
 				}
 				else
 				{
@@ -283,6 +385,7 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 					bool bShieldsUp;
 					pub::SpaceObj::GetShieldHealth(iDmgToSpaceID, curr, max, bShieldsUp);
 					setDamage = HandleEquipmentDamage(dmg, subObjID, setHealth, fate, iDmgToSpaceID, 1, daMult);
+					ConPrint(L"Shield Hit -- Magic Weapon has a %0.2f damage multiplier, %0.2f pierce shield multiplier. Damage Dealt: %0.2f\n", daMult, iter->second.pierceShieldMultiplier, setDamage * daMult);
 				}
 
 				if (pierceMult > 0.0f) //If piercing multiplier is not 0, handle the rest as if the damage hit the hull.
@@ -291,47 +394,72 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 					pub::SpaceObj::GetHealth(iDmgToSpaceID, curr, max);
 					setHealth = curr - setDamage * pierceMult;
 					subObjID = 1;
+					ConPrint(L"Handling pierced damage to hull. Expected Hull: %0.2f / %0.2f | Damage Amount: %0.2f\n", setHealth, max, setDamage * daMult * pierceMult);
 				}
 			}
-		}
-		else
-		{
-			map<uint, float>::iterator iter = mapAllowEnergyDamageAdjust.find(iDmgMunitionID);
-			if (iter != mapAllowEnergyDamageAdjust.end())
-			{
-				HandleEquipmentDamage(dmg, 2, iter->second, (DamageEntry::SubObjFate)0, iDmgToSpaceID, 1.0f);
-			}
-		}
-
-		if (daMult!=1)
-		{
-			float curr, max;
-			bool bShieldsUp;
-
-			if (subObjID == 1) // 1 is base (hull)
-				pub::SpaceObj::GetHealth(iDmgToSpaceID, curr, max);
-			else if (subObjID == 65521) // 65521 is shield (bubble, not equipment)
-				pub::SpaceObj::GetShieldHealth(iDmgToSpaceID, curr, max, bShieldsUp);
 			else
-				return; // If hit mounted equipment - do not continue with uninitialized variables.
-			setHealth = curr - (curr - setHealth) * daMult;
+			{
+				//If the hull is hit directly, check to see if any alternative handling is needed.
+				if (repFlat > 0 || repPerc > 0) //If either of these are greater than 0, handle a repair.
+				{
+					float curr, max;
+					if (subObjID == 1) // 1 is base (hull)
+						pub::SpaceObj::GetHealth(iDmgToSpaceID, curr, max);
+					else if (subObjID == 65521) // 65521 is shield (bubble, not equipment)
+						goto CleanAndReturn; // If hit shield - do not continue with uninitialized variables.
+					setHealth = curr + (max / 100 * repPerc + repFlat);
 
-			// Add damage entry instead of FLHook Core.
-			dmg->add_damage_entry(subObjID, setHealth, fate);
+					if (setHealth > max) //Prevent health from going over the maximum value for the target.
+						setHealth = max;
+
+					// Add damage entry instead of FLHook Core.
+					dmg->add_damage_entry(1, setHealth, (DamageEntry::SubObjFate)0);
+					ConPrint(L"Handling repair of ship. Expected Hull: %0.2f / %0.2f | Repair Amount: %0.2f \n", curr, max, max / 100 * repPerc + repFlat);
+					goto CleanAndReturn;
+				}
+
+				if (iter->second.energyDamage != 0) //If energy damage should be dealt, handle equipment damage to the powercore.
+				{
+					HandleEquipmentDamage(dmg, 2, iter->second.energyDamage, (DamageEntry::SubObjFate)0, iDmgToSpaceID, 1.0f);
+				}
+
+			}
+
+			if (daMult != 1)
+			{
+				float curr, max;
+				bool bShieldsUp;
+
+				if (subObjID == 1) // 1 is base (hull)
+					pub::SpaceObj::GetHealth(iDmgToSpaceID, curr, max);
+				else if (subObjID == 65521) // 65521 is shield (bubble, not equipment)
+					pub::SpaceObj::GetShieldHealth(iDmgToSpaceID, curr, max, bShieldsUp);
+				else
+					return; // If hit mounted equipment - do not continue with uninitialized variables. (Should never hit this since equipment damage is handled above)
+				setHealth = curr - (curr - setHealth) * daMult;
+
+				ConPrint(L"Handling scaled damage to ship. Expected Hull: %0.2f / %0.2f | Damage Amount: %0.2f\n", setHealth, max, (curr - setHealth));
+
+				// Add damage entry instead of FLHook Core.
+				dmg->add_damage_entry(subObjID, setHealth, fate);
+			}
+
+			CleanAndReturn: //Using this label for returns in order to avoid instances where variable values are retained for some reason.
+
+				// Fix wrong shield rebuild time bug.
+			if (setHealth < 0)
+				setHealth = 0;
+
+			// Fix wrong death message bug.
+			if (iDmgTo && subObjID == 1)
+				ClientInfo[iDmgTo].dmgLast = *dmg;
+
+			returncode = SKIPPLUGINS_NOFUNCTIONCALL;
+
+			iDmgTo = 0;
+			iDmgToSpaceID = 0;
+			iDmgMunitionID = 0;
 		}
-		// Fix wrong shield rebuild time bug.
-		if (setHealth < 0)
-			setHealth = 0;
-
-		// Fix wrong death message bug.
-		if (iDmgTo && subObjID == 1)
-			ClientInfo[iDmgTo].dmgLast = *dmg;
-
-		returncode = SKIPPLUGINS_NOFUNCTIONCALL;
-
-		iDmgTo = 0;
-		iDmgToSpaceID = 0;
-		iDmgMunitionID = 0;
 	}
 
 	//uint iArchID;
@@ -358,7 +486,7 @@ void __stdcall HkCb_AddDmgEntry(DamageList *dmg, ushort subObjID, float setHealt
 	//}
 }
 
-float HandleEquipmentDamage(DamageList *dmg, ushort subObjID, float setHealth, DamageEntry::SubObjFate fate, uint iDmgToSpaceID, float multiplier, float daMult)
+float HandleEquipmentDamage(DamageList *dmg, ushort subObjID, float setHealth, DamageEntry::SubObjFate fate, uint iDmgToSpaceID, float edaMult, float daMult)
 {
 	float setDamage, curr, max;
 	if (subObjID == 65521)
@@ -392,12 +520,12 @@ float HandleEquipmentDamage(DamageList *dmg, ushort subObjID, float setHealth, D
 						setHealth = 0;
 					dmg->add_damage_entry(2, setHealth, (DamageEntry::SubObjFate)2);
 				}
-				else
+				else if (subObjID != 65521)
 				{
 					cship->get_sub_obj_hit_pts(subObjID, curr);
 					cship->get_sub_obj_max_hit_pts(subObjID, max);
 					setDamage = curr - setHealth;
-					setHealth = curr - setDamage * multiplier * daMult;
+					setHealth = curr - setDamage * edaMult * daMult;
 					if (setHealth < 0)
 					{
 						setHealth = 0;
@@ -414,54 +542,6 @@ float HandleEquipmentDamage(DamageList *dmg, ushort subObjID, float setHealth, D
 	return 0.0f;
 }
 
-float GetDamageAdjustMultiplier()
-{
-	uint iTargetType;
-	pub::SpaceObj::GetType(iDmgToSpaceID, iTargetType);
-
-	// Deduce: if not fighter nor freighter, then it's obviously solar object.
-	map<uint, DamageMultiplier>::iterator iter = mapDamageAdjust.find(iDmgMunitionID);
-	if (iter != mapDamageAdjust.end())
-	{
-		if (iTargetType != OBJ_FIGHTER && iTargetType != OBJ_FREIGHTER)
-		{
-			return iter->second.solar;
-		}
-		else
-		{
-			uint iArchID;
-			pub::SpaceObj::GetSolarArchetypeID(iDmgToSpaceID, iArchID);
-			uint targetShipClass = Archetype::GetShip(iArchID)->iShipClass;
-
-			switch (targetShipClass)
-			{
-			case 0: case 1: case 2: case 3: case 4: case 5:
-				return iter->second.fighter;
-				break;
-			case 6: case 7: case 8: case 9: case 10:
-				return iter->second.freighter;
-				break;
-			case 11: case 12:
-				return iter->second.transport;
-				break;
-			case 13: case 14:
-				return iter->second.cruiser;
-				break;
-			case 15:
-				return iter->second.battlecruiser;
-				break;
-			case 16: case 17: case 18:
-				return iter->second.battleship;
-				break;
-			default:
-				return 1;
-				break;
-			}
-		}
-	}
-	return 1;
-}
-
 void Plugin_Communication_Callback(PLUGIN_MESSAGE msg, void* data)
 {
 	returncode = DEFAULT_RETURNCODE;
@@ -470,10 +550,10 @@ void Plugin_Communication_Callback(PLUGIN_MESSAGE msg, void* data)
 	{
 		returncode = SKIPPLUGINS;
 		COMBAT_DAMAGE_OVERRIDE_STRUCT* info = reinterpret_cast<COMBAT_DAMAGE_OVERRIDE_STRUCT*>(data);
-		map<uint, DamageMultiplier>::iterator iter = mapDamageAdjust.find(info->iMunitionID);
-		if (iter != mapDamageAdjust.end())
+		map<uint, MagicWeapon>::iterator iter = mapMagicWeapons.find(info->iMunitionID);
+		if (iter != mapMagicWeapons.end())
 		{
-			info->fDamageMultiplier = iter->second.solar;
+			info->fDamageMultiplier = iter->second.DamageMultiplier.solar;
 		}
 	}
 	return;
