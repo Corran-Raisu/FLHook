@@ -139,7 +139,7 @@ copy /Y $(OutDir)$(TargetName).pdb  ..\..\..\Binaries\bin-vc14\flhook_plugins\pu
       <TargetMachine>MachineX86</TargetMachine>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y $(OutDir)$(TargetName).dll  ..\..\..\Binaries\bin-vc14\flhook_plugins\public\</Command>
+      <Command />
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
